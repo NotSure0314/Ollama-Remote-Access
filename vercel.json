@@ -1,13 +1,8 @@
 {
-  "version": 2,
   "rewrites": [
     {
-      "source": "/proxy/tags",
-      "destination": "/api/tags"
-    },
-    {
-      "source": "/proxy/chat",
-      "destination": "/api/chat"
+      "source": "/proxy/:path*",
+      "destination": "/api/:path*"
     }
   ]
 }

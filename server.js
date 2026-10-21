@@ -45,7 +45,10 @@ const server = http.createServer(async (req, res) => {
     return fs.createReadStream(path.join(__dirname, "index.html")).pipe(res);
   }
 
-  if (req.method === "POST" && (req.url === "/proxy/tags" || req.url === "/proxy/chat")) {
+  const isTags = req.url === "/api/tags" || req.url === "/proxy/tags";
+  const isChat = req.url === "/api/chat" || req.url === "/proxy/chat";
+
+  if (req.method === "POST" && (isTags || isChat)) {
     if (!checkAuth(req)) {
       return sendJson(res, 401, { error: "Unauthorized: Invalid or missing access password." });
     }
@@ -57,7 +60,7 @@ const server = http.createServer(async (req, res) => {
       const { server: target, ...body } = await readJson(req);
       const origin = normalizeTarget(target);
 
-      if (req.url === "/proxy/tags") {
+      if (isTags) {
         const r = await fetch(origin + "/api/tags", {
           signal: AbortSignal.any([ac.signal, AbortSignal.timeout(8000)]),
         });

@@ -171,7 +171,12 @@ const store = {
 let chats = store.get("chats", []);
 let activeId = null, connected = false, editing = false, controller = null;
 const serverEl = $("server"), modelEl = $("model"), input = $("input"), thread = $("thread"), scroller = $("scroll");
-serverEl.value = store.get("server", "https://ollama.internal:11434");
+let savedServer = store.get("server", "");
+if (savedServer === "https://ollama.internal:11434") {
+  savedServer = "";
+  store.set("server", "");
+}
+serverEl.value = savedServer;
 
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 function md(s) {

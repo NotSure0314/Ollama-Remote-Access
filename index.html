@@ -240,7 +240,29 @@ function saveCurChats(list) {
 
 let activeId = null, connected = false, editing = false, controller = null;
 const serverEl = $("server"), modelEl = $("model"), input = $("input"), thread = $("thread"), scroller = $("scroll");
-serverEl.value = activeServer || "";
+
+// Restore last typed server or active server
+const lastTyped = store.get("last_server_typed", "");
+serverEl.value = activeServer || lastTyped || "";
+serverEl.oninput = () => {
+  store.set("last_server_typed", serverEl.value.trim());
+};
+
+// Optimistic connected state if activeServer already saved
+if (activeServer) {
+  connected = true;
+  editing = false;
+  activeId = store.get("activeId_" + activeServer, null);
+  const cachedModels = store.get("models_" + activeServer, []);
+  const savedModel = store.get("model_" + activeServer, "");
+  if (cachedModels.length) {
+    modelEl.innerHTML = "";
+    for (const n of cachedModels) modelEl.add(new Option(n, n));
+    modelEl.value = cachedModels.includes(savedModel) ? savedModel : cachedModels[0];
+  }
+} else {
+  editing = true;
+}
 
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 function md(s) {
@@ -310,13 +332,24 @@ function switchServer(srv) {
   if (controller) controller.abort();
   activeServer = srv;
   store.set("activeServer", activeServer);
+  store.set("last_server_typed", srv);
   serverEl.value = srv;
-  activeId = null;
+  activeId = store.get("activeId_" + srv, null);
   editing = false;
+  connected = true;
   closeServerMenu();
   closeMenu();
+
+  const cachedModels = store.get("models_" + srv, []);
+  if (cachedModels.length) {
+    const keep = store.get("model_" + srv, "");
+    modelEl.innerHTML = "";
+    for (const n of cachedModels) modelEl.add(new Option(n, n));
+    modelEl.value = cachedModels.includes(keep) ? keep : cachedModels[0];
+  }
+
   render();
-  connect(false);
+  connect(true);
 }
 
 function removeServer(srv, e) {
@@ -355,14 +388,14 @@ $("add-server-btn").onclick = (e) => {
 };
 
 function render() {
-  const showConnect = !connected || editing;
+  const showConnect = (!activeServer && !connected) || editing;
   const c = cur();
   document.body.dataset.state = showConnect ? "connect" : c && c.messages.length ? "thread" : "empty";
   document.body.classList.toggle("on", connected);
 
   const addr = activeServer || serverEl.value.trim();
-  $("pill-addr").textContent = activeServer ? activeServer : "No server";
-  $("pill-state").textContent = connected ? "Connected" : (activeServer ? "Not connected" : "No server selected");
+  $("pill-addr").textContent = activeServer ? activeServer : (addr || "No server");
+  $("pill-state").textContent = connected ? "Connected" : (activeServer ? "Reconnecting…" : "No server");
   $("server-pill").title = servers.length ? "Switch or add server" : "Enter a server address";
   
   const arrow = $("pill-arrow");
@@ -370,7 +403,7 @@ function render() {
 
   $("hello").textContent = modelEl.value || "";
   const n = modelEl.options.length;
-  $("hello-sub").textContent = connected ? `${addr} · ${n} model${n === 1 ? "" : "s"} installed` : "";
+  $("hello-sub").textContent = connected ? `${addr} · ${n} model${n === 1 ? "" : "s"} installed` : (activeServer ? `${addr} · Connecting…` : "");
 
   // Render chat list for current activeServer
   const list = $("list");
@@ -383,13 +416,23 @@ function render() {
     row.innerHTML = '<button class="open"></button><button class="del" aria-label="Delete chat"><i class="ph ph-trash" aria-hidden="true"></i></button>';
     row.querySelector(".open").title = ch.title;
     row.querySelector(".open").textContent = ch.title;
-    row.querySelector(".open").onclick = () => { activeId = ch.id; editing = false; closeMenu(); render(); scroller.scrollTop = scroller.scrollHeight; };
+    row.querySelector(".open").onclick = () => {
+      activeId = ch.id;
+      if (activeServer) store.set("activeId_" + activeServer, activeId);
+      editing = false;
+      closeMenu();
+      render();
+      scroller.scrollTop = scroller.scrollHeight;
+    };
     row.querySelector(".del").onclick = (e) => {
       e.stopPropagation();
       if (!confirm("Delete this chat?")) return;
       const updated = getCurChats().filter((x) => x.id !== ch.id);
       saveCurChats(updated);
-      if (activeId === ch.id) activeId = null;
+      if (activeId === ch.id) {
+        activeId = null;
+        if (activeServer) store.set("activeId_" + activeServer, null);
+      }
       render();
     };
     list.appendChild(row);
@@ -413,15 +456,32 @@ function addMsg(role, text) {
 
 function closeMenu() { document.body.classList.remove("menu"); closeServerMenu(); }
 $("menu").onclick = () => document.body.classList.toggle("menu");
-$("new").onclick = () => { activeId = null; editing = false; closeMenu(); render(); input.focus(); };
+$("new").onclick = () => {
+  activeId = null;
+  if (activeServer) store.set("activeId_" + activeServer, null);
+  editing = false;
+  closeMenu();
+  render();
+  input.focus();
+};
 $("server-pill").onclick = toggleServerMenu;
 
 async function connect(silent) {
-  const server = serverEl.value.trim();
+  const server = (serverEl.value || activeServer || "").trim();
   const err = $("err");
-  if (!server) { err.className = ""; err.textContent = "Enter a server address."; return; }
-  err.className = "info"; err.textContent = "Connecting…";
-  $("connect").disabled = true;
+  if (!server) {
+    if (!silent) {
+      err.className = "";
+      err.textContent = "Enter a server address.";
+    }
+    return;
+  }
+  if (!silent) {
+    err.className = "info";
+    err.textContent = "Connecting…";
+    $("connect").disabled = true;
+  }
+  store.set("last_server_typed", server);
   try {
     const r = await fetch("/api/tags", { method: "POST", headers: apiHeaders(), body: JSON.stringify({ server }) });
     if (r.status === 401) {
@@ -441,10 +501,13 @@ async function connect(silent) {
     if (!r.ok) throw new Error(data.error || `Connection failed (HTTP ${r.status}).`);
     const names = (data.models || []).map((m) => m.name);
     if (!names.length) throw new Error("Connected, but no models are installed. Run: ollama pull llama3.2");
+
+    store.set("models_" + server, names);
     const keep = store.get("model_" + server, "");
     modelEl.innerHTML = "";
     for (const n of names) modelEl.add(new Option(n, n));
     modelEl.value = names.includes(keep) ? keep : names[0];
+
     connected = true;
     editing = false;
     activeServer = server;
@@ -455,12 +518,17 @@ async function connect(silent) {
     store.set("activeServer", activeServer);
     err.textContent = "";
     render();
-    input.focus();
+    if (!silent) input.focus();
   } catch (e) {
     connected = false;
-    err.className = ""; err.textContent = silent ? "" : e.message + (/pull/.test(e.message) ? "" : " Check the address, that Ollama is running, and that it listens on the network.");
+    if (!silent) {
+      err.className = "";
+      err.textContent = e.message + (/pull/.test(e.message) ? "" : " Check the address, that Ollama is running, and that it listens on the network.");
+    }
     render();
-  } finally { $("connect").disabled = false; }
+  } finally {
+    $("connect").disabled = false;
+  }
 }
 $("connect").onclick = () => connect(false);
 serverEl.onkeydown = (e) => { if (e.key === "Enter") connect(false); };

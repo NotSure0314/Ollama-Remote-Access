@@ -7,7 +7,7 @@ A modern, fast web interface and proxy for connecting to local or remote Ollama 
 - **Direct Web UI**: Designed with Swiss typography tokens and Geist Mono.
 - **Serverless Ready (Vercel)**: Streaming proxy API routes (`/api/chat`, `/api/tags`) ready for zero-configuration Vercel deployment.
 - **Zero Dependencies**: Native Node.js HTTP/fetch implementation with no external runtime packages.
-- **Private Access Control**: Optional passcode lock via `ACCESS_PASSWORD` environment variable.
+- **Server Switcher & Persistence**: Save multiple Ollama servers in a dropdown switcher; each server remembers its own chats and connection state in local storage.
 - **Dark & Light Modes**: Full theme support based on system preference.
 
 ## Local Running
@@ -20,8 +20,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ## Deploying to Vercel
 
 1. Import this repository into Vercel.
-2. (Optional) Set `ACCESS_PASSWORD` under **Project Settings → Environment Variables** to password-protect your proxy.
-3. Deploy!
+2. Deploy! No environment variables required.
 
 ## Connecting to Ollama
 

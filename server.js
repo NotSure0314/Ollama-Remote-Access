@@ -32,13 +32,6 @@ function sendJson(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
-function checkAuth(req) {
-  const secret = process.env.ACCESS_PASSWORD;
-  if (!secret) return true;
-  const provided = req.headers["x-access-key"] || (req.headers["authorization"] ? req.headers["authorization"].replace(/^Bearer\s+/i, "") : "");
-  return provided === secret;
-}
-
 const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && (req.url === "/" || req.url === "/index.html")) {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -49,10 +42,6 @@ const server = http.createServer(async (req, res) => {
   const isChat = req.url === "/api/chat" || req.url === "/proxy/chat";
 
   if (req.method === "POST" && (isTags || isChat)) {
-    if (!checkAuth(req)) {
-      return sendJson(res, 401, { error: "Unauthorized: Invalid or missing access password." });
-    }
-
     const ac = new AbortController();
     res.on("close", () => ac.abort());
 

@@ -273,13 +273,6 @@ function md(s) {
 
 const cur = () => getCurChats().find((c) => c.id === activeId);
 
-function apiHeaders() {
-  const h = { "Content-Type": "application/json" };
-  const key = store.get("access_key", "");
-  if (key) h["x-access-key"] = key;
-  return h;
-}
-
 function closeServerMenu() {
   const sel = $("server-selector");
   if (sel) sel.classList.remove("open");
@@ -483,14 +476,7 @@ async function connect(silent) {
   }
   store.set("last_server_typed", server);
   try {
-    const r = await fetch("/api/tags", { method: "POST", headers: apiHeaders(), body: JSON.stringify({ server }) });
-    if (r.status === 401) {
-      const pass = prompt("Private instance. Please enter your access password:");
-      if (pass) {
-        store.set("access_key", pass.trim());
-        return connect(silent);
-      }
-    }
+    const r = await fetch("/api/tags", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ server }) });
     let data;
     try {
       data = await r.json();
@@ -562,20 +548,10 @@ async function send(text) {
   setBusy(true);
   try {
     const r = await fetch("/api/chat", {
-      method: "POST", headers: apiHeaders(), signal: controller.signal,
+      method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
       body: JSON.stringify({ server: activeServer, model: modelEl.value, messages: c.messages }),
     });
     if (!r.ok) {
-      if (r.status === 401) {
-        const pass = prompt("Private instance. Please enter your access password:");
-        if (pass) {
-          store.set("access_key", pass.trim());
-          c.messages.pop();
-          saveCurChats(chats);
-          render();
-          return send(text);
-        }
-      }
       let errText = `Request failed (${r.status}).`;
       try {
         const d = await r.json();

@@ -1,13 +1,9 @@
-const { normalizeTarget, checkAuth } = require("./_utils");
+const { normalizeTarget } = require("./_utils");
 
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Method not allowed. Use POST." });
-  }
-
-  if (!checkAuth(req)) {
-    return res.status(401).json({ error: "Unauthorized: Invalid or missing access password." });
   }
 
   const ac = new AbortController();

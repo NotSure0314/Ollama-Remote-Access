@@ -49,13 +49,33 @@ aside { width: 272px; flex: none; background: var(--side); display: flex; flex-d
 .chat:hover .del, .chat .del:focus-visible { opacity: 1; }
 .chat .del:hover { color: var(--bad); }
 .none { color: var(--dim); font-size: 14px; padding: 8px 10px; }
-#server-pill { display: flex; align-items: center; gap: 10px; width: 100%; background: var(--raise); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; text-align: left; }
+#server-selector { position: relative; width: 100%; }
+#server-pill { display: flex; align-items: center; gap: 10px; width: 100%; background: var(--raise); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; text-align: left; cursor: pointer; }
 #server-pill:hover { border-color: var(--dim); }
 #server-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
 body.on #server-pill .dot { background: var(--good); }
-.meta { display: flex; flex-direction: column; min-width: 0; }
+.meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 #server-pill .state { font-size: 12.5px; color: var(--dim); line-height: 1.3; }
 #server-pill .addr { font-family: var(--mono); font-size: 13px; font-weight: 500; line-height: 18px; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pill-arrow { font-size: 16px; color: var(--dim); transition: transform 0.15s ease; flex: none; margin-left: 4px; display: none; }
+#server-selector.open .pill-arrow { transform: rotate(180deg); }
+
+/* server menu dropdown */
+#server-menu { position: absolute; bottom: calc(100% + 8px); left: 0; right: 0; background: var(--raise); border: 1px solid var(--line); border-radius: 10px; padding: 6px; box-shadow: 0 12px 28px rgba(0,0,0,0.35); display: none; flex-direction: column; gap: 2px; z-index: 20; max-height: 280px; overflow-y: auto; }
+#server-selector.open #server-menu { display: flex; }
+.menu-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--dim); font-weight: 600; padding: 6px 8px 4px; }
+.server-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 6px; cursor: pointer; text-align: left; background: none; border: 0; width: 100%; color: inherit; }
+.server-item:hover { background: var(--hover); }
+.server-item.active { background: var(--hover); font-weight: 500; }
+.server-item .item-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
+.server-item.active .item-dot { background: var(--good); }
+.server-item .item-addr { font-family: var(--mono); font-size: 12.5px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.server-item .del-srv { background: none; border: 0; color: var(--dim); padding: 2px 4px; font-size: 14px; line-height: 1; border-radius: 4px; opacity: 0; display: flex; align-items: center; justify-content: center; }
+.server-item:hover .del-srv { opacity: 1; }
+.server-item .del-srv:hover { color: var(--bad); }
+.menu-div { height: 1px; background: var(--line); margin: 4px 0; }
+#add-server-btn { display: flex; align-items: center; gap: 8px; width: 100%; background: transparent; border: 0; border-radius: 6px; padding: 7px 8px; color: var(--accent); font-size: 13px; font-weight: 500; text-align: left; cursor: pointer; }
+#add-server-btn:hover { background: var(--hover); }
 
 /* main */
 main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -129,7 +149,22 @@ body[data-state="empty"] main > .spacer { display: none; }
   <button class="newchat" id="new"><i class="ph ph-plus" aria-hidden="true"></i> New chat</button>
   <div class="label">Chats</div>
   <nav id="list" aria-label="Saved chats"></nav>
-  <button id="server-pill" aria-label="Change server"><span class="dot" aria-hidden="true"></span><span class="meta"><span class="addr" id="pill-addr">No server</span><span class="state" id="pill-state">Not connected</span></span></button>
+  <div id="server-selector">
+    <div id="server-menu" role="menu" aria-label="Server selection">
+      <div class="menu-head">Servers</div>
+      <div id="server-list"></div>
+      <div class="menu-div"></div>
+      <button id="add-server-btn" type="button"><i class="ph ph-plus" aria-hidden="true"></i> Add server</button>
+    </div>
+    <button id="server-pill" aria-label="Change server" aria-haspopup="true">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="meta">
+        <span class="addr" id="pill-addr">No server</span>
+        <span class="state" id="pill-state">Not connected</span>
+      </span>
+      <i class="ph ph-caret-up pill-arrow" id="pill-arrow" aria-hidden="true"></i>
+    </button>
+  </div>
 </aside>
 
 <main>
@@ -168,15 +203,44 @@ const store = {
   get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
-let chats = store.get("chats", []);
+
+// Servers & server-scoped chats
+let servers = store.get("servers", []);
+servers = servers.filter((s) => s && s !== "https://ollama.internal:11434");
+store.set("servers", servers);
+
+let activeServer = store.get("activeServer", servers[0] || "");
+if (activeServer === "https://ollama.internal:11434") {
+  activeServer = servers[0] || "";
+  store.set("activeServer", activeServer);
+}
+
+let serverChats = store.get("server_chats", {});
+
+// Migrate legacy single chats list if present
+const legacyChats = store.get("chats", null);
+if (legacyChats && Array.isArray(legacyChats) && legacyChats.length) {
+  if (activeServer && (!serverChats[activeServer] || !serverChats[activeServer].length)) {
+    serverChats[activeServer] = legacyChats;
+    store.set("server_chats", serverChats);
+  }
+}
+
+function getCurChats() {
+  if (!activeServer) return [];
+  if (!serverChats[activeServer]) serverChats[activeServer] = [];
+  return serverChats[activeServer];
+}
+
+function saveCurChats(list) {
+  if (!activeServer) return;
+  serverChats[activeServer] = list;
+  store.set("server_chats", serverChats);
+}
+
 let activeId = null, connected = false, editing = false, controller = null;
 const serverEl = $("server"), modelEl = $("model"), input = $("input"), thread = $("thread"), scroller = $("scroll");
-let savedServer = store.get("server", "");
-if (savedServer === "https://ollama.internal:11434") {
-  savedServer = "";
-  store.set("server", "");
-}
-serverEl.value = savedServer;
+serverEl.value = activeServer || "";
 
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 function md(s) {
@@ -184,8 +248,8 @@ function md(s) {
     ? `<pre><code>${esc(p.replace(/^[\w+-]*\n/, ""))}</code></pre>`
     : esc(p).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")).join("");
 }
-const cur = () => chats.find((c) => c.id === activeId);
-const save = () => store.set("chats", chats);
+
+const cur = () => getCurChats().find((c) => c.id === activeId);
 
 function apiHeaders() {
   const h = { "Content-Type": "application/json" };
@@ -194,21 +258,124 @@ function apiHeaders() {
   return h;
 }
 
+function closeServerMenu() {
+  const sel = $("server-selector");
+  if (sel) sel.classList.remove("open");
+}
+
+function toggleServerMenu(e) {
+  if (e) e.stopPropagation();
+  if (!servers.length) {
+    editing = true;
+    closeMenu();
+    render();
+    serverEl.focus();
+    return;
+  }
+  const sel = $("server-selector");
+  sel.classList.toggle("open");
+  if (sel.classList.contains("open")) renderServerMenu();
+}
+
+document.addEventListener("click", (e) => {
+  const sel = $("server-selector");
+  if (sel && !sel.contains(e.target)) closeServerMenu();
+});
+
+function renderServerMenu() {
+  const container = $("server-list");
+  if (!container) return;
+  container.innerHTML = "";
+  for (const srv of servers) {
+    const isActive = srv === activeServer;
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "server-item" + (isActive ? " active" : "");
+    item.innerHTML = `
+      <span class="item-dot"></span>
+      <span class="item-addr" title="${esc(srv)}">${esc(srv)}</span>
+      ${isActive ? '<i class="ph ph-check" style="color:var(--accent);font-size:14px;flex:none;"></i>' : ''}
+      <button class="del-srv" type="button" title="Remove server" aria-label="Remove server"><i class="ph ph-trash"></i></button>
+    `;
+    item.onclick = (e) => {
+      if (e.target.closest(".del-srv")) return;
+      switchServer(srv);
+    };
+    item.querySelector(".del-srv").onclick = (e) => removeServer(srv, e);
+    container.appendChild(item);
+  }
+}
+
+function switchServer(srv) {
+  if (controller) controller.abort();
+  activeServer = srv;
+  store.set("activeServer", activeServer);
+  serverEl.value = srv;
+  activeId = null;
+  editing = false;
+  closeServerMenu();
+  closeMenu();
+  render();
+  connect(false);
+}
+
+function removeServer(srv, e) {
+  e.stopPropagation();
+  if (!confirm(`Remove server ${srv}?`)) return;
+  servers = servers.filter((s) => s !== srv);
+  store.set("servers", servers);
+  delete serverChats[srv];
+  store.set("server_chats", serverChats);
+  if (activeServer === srv) {
+    if (servers.length) {
+      switchServer(servers[0]);
+    } else {
+      activeServer = "";
+      store.set("activeServer", "");
+      serverEl.value = "";
+      connected = false;
+      editing = true;
+      closeServerMenu();
+      render();
+    }
+  } else {
+    renderServerMenu();
+    render();
+  }
+}
+
+$("add-server-btn").onclick = (e) => {
+  e.stopPropagation();
+  closeServerMenu();
+  closeMenu();
+  editing = true;
+  serverEl.value = "";
+  render();
+  serverEl.focus();
+};
+
 function render() {
   const showConnect = !connected || editing;
   const c = cur();
   document.body.dataset.state = showConnect ? "connect" : c && c.messages.length ? "thread" : "empty";
   document.body.classList.toggle("on", connected);
-  const addr = serverEl.value.trim();
-  $("pill-addr").textContent = connected ? addr : "No server";
-  $("pill-state").textContent = connected ? "Connected" : "Not connected";
-  $("server-pill").title = connected ? addr : "Enter a server address";
+
+  const addr = activeServer || serverEl.value.trim();
+  $("pill-addr").textContent = activeServer ? activeServer : "No server";
+  $("pill-state").textContent = connected ? "Connected" : (activeServer ? "Not connected" : "No server selected");
+  $("server-pill").title = servers.length ? "Switch or add server" : "Enter a server address";
+  
+  const arrow = $("pill-arrow");
+  if (arrow) arrow.style.display = servers.length ? "inline-block" : "none";
+
   $("hello").textContent = modelEl.value || "";
   const n = modelEl.options.length;
   $("hello-sub").textContent = connected ? `${addr} · ${n} model${n === 1 ? "" : "s"} installed` : "";
 
+  // Render chat list for current activeServer
   const list = $("list");
   list.innerHTML = "";
+  const chats = getCurChats();
   if (!chats.length) list.innerHTML = '<div class="none">No chats yet</div>';
   for (const ch of chats) {
     const row = document.createElement("div");
@@ -217,11 +384,13 @@ function render() {
     row.querySelector(".open").title = ch.title;
     row.querySelector(".open").textContent = ch.title;
     row.querySelector(".open").onclick = () => { activeId = ch.id; editing = false; closeMenu(); render(); scroller.scrollTop = scroller.scrollHeight; };
-    row.querySelector(".del").onclick = () => {
+    row.querySelector(".del").onclick = (e) => {
+      e.stopPropagation();
       if (!confirm("Delete this chat?")) return;
-      chats = chats.filter((x) => x.id !== ch.id);
+      const updated = getCurChats().filter((x) => x.id !== ch.id);
+      saveCurChats(updated);
       if (activeId === ch.id) activeId = null;
-      save(); render();
+      render();
     };
     list.appendChild(row);
   }
@@ -242,10 +411,10 @@ function addMsg(role, text) {
   return body;
 }
 
-function closeMenu() { document.body.classList.remove("menu"); }
+function closeMenu() { document.body.classList.remove("menu"); closeServerMenu(); }
 $("menu").onclick = () => document.body.classList.toggle("menu");
 $("new").onclick = () => { activeId = null; editing = false; closeMenu(); render(); input.focus(); };
-$("server-pill").onclick = () => { editing = true; closeMenu(); render(); serverEl.focus(); };
+$("server-pill").onclick = toggleServerMenu;
 
 async function connect(silent) {
   const server = serverEl.value.trim();
@@ -266,14 +435,21 @@ async function connect(silent) {
     if (!r.ok) throw new Error(data.error || "Connection failed.");
     const names = (data.models || []).map((m) => m.name);
     if (!names.length) throw new Error("Connected, but no models are installed. Run: ollama pull llama3.2");
-    const keep = store.get("model", "");
+    const keep = store.get("model_" + server, "");
     modelEl.innerHTML = "";
     for (const n of names) modelEl.add(new Option(n, n));
     modelEl.value = names.includes(keep) ? keep : names[0];
-    connected = true; editing = false;
-    store.set("server", server);
+    connected = true;
+    editing = false;
+    activeServer = server;
+    if (!servers.includes(server)) {
+      servers.push(server);
+      store.set("servers", servers);
+    }
+    store.set("activeServer", activeServer);
     err.textContent = "";
-    render(); input.focus();
+    render();
+    input.focus();
   } catch (e) {
     connected = false;
     err.className = ""; err.textContent = silent ? "" : e.message + (/pull/.test(e.message) ? "" : " Check the address, that Ollama is running, and that it listens on the network.");
@@ -282,7 +458,7 @@ async function connect(silent) {
 }
 $("connect").onclick = () => connect(false);
 serverEl.onkeydown = (e) => { if (e.key === "Enter") connect(false); };
-modelEl.onchange = () => { store.set("model", modelEl.value); render(); };
+modelEl.onchange = () => { if (activeServer) store.set("model_" + activeServer, modelEl.value); render(); };
 
 const UP_ICON = `<i class="ph ph-arrow-up" aria-hidden="true"></i>`;
 function setBusy(on) {
@@ -292,12 +468,16 @@ function setBusy(on) {
 }
 
 async function send(text) {
+  if (!activeServer) return;
+  let chats = getCurChats();
   let c = cur();
   if (!c) {
     c = { id: String(Date.now()), title: text.slice(0, 48), messages: [] };
-    chats.unshift(c); activeId = c.id;
+    chats.unshift(c);
+    activeId = c.id;
   }
   c.messages.push({ role: "user", content: text });
+  saveCurChats(chats);
   render();
   const body = addMsg("assistant", "");
   body.innerHTML = '<span class="wait">Thinking…</span>';
@@ -309,7 +489,7 @@ async function send(text) {
   try {
     const r = await fetch("/proxy/chat", {
       method: "POST", headers: apiHeaders(), signal: controller.signal,
-      body: JSON.stringify({ server: serverEl.value.trim(), model: modelEl.value, messages: c.messages }),
+      body: JSON.stringify({ server: activeServer, model: modelEl.value, messages: c.messages }),
     });
     if (!r.ok) {
       if (r.status === 401) {
@@ -317,6 +497,7 @@ async function send(text) {
         if (pass) {
           store.set("access_key", pass.trim());
           c.messages.pop();
+          saveCurChats(chats);
           render();
           return send(text);
         }
@@ -341,11 +522,27 @@ async function send(text) {
       scroller.scrollTop = scroller.scrollHeight;
     }
     c.messages.push({ role: "assistant", content: reply });
+    saveCurChats(chats);
   } catch (e) {
-    if (e.name === "AbortError") { if (reply) c.messages.push({ role: "assistant", content: reply }); }
-    else { c.messages.pop(); body.parentElement.className = "msg error"; body.textContent = e.message + " Check that the server is still reachable, then send again."; save(); controller = null; setBusy(false); return; }
+    if (e.name === "AbortError") {
+      if (reply) {
+        c.messages.push({ role: "assistant", content: reply });
+        saveCurChats(chats);
+      }
+    } else {
+      c.messages.pop();
+      saveCurChats(chats);
+      body.parentElement.className = "msg error";
+      body.textContent = e.message + " Check that the server is still reachable, then send again.";
+      controller = null;
+      setBusy(false);
+      return;
+    }
   }
-  controller = null; setBusy(false); save(); render(); input.focus();
+  controller = null;
+  setBusy(false);
+  render();
+  input.focus();
 }
 
 $("composer").onsubmit = (e) => {
@@ -360,7 +557,10 @@ input.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposin
 input.oninput = () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 200) + "px"; };
 
 render();
-if (serverEl.value) connect(true);
+if (activeServer) {
+  serverEl.value = activeServer;
+  connect(true);
+}
 </script>
 </body>
 </html>

@@ -333,7 +333,7 @@ body[data-state="empty"] main > .spacer { display: none; }
     <p class="on-empty" id="hello-sub"></p>
     <div id="connect-card">
       <div class="row">
-        <input id="server" type="text" placeholder="https://ollama.internal:11434" aria-label="Ollama server address" autocomplete="off" spellcheck="false">
+        <input id="server" type="text" placeholder="e.g. 192.168.1.100:11434" aria-label="Ollama server address" autocomplete="off" spellcheck="false">
         <button class="btn" id="connect">Connect</button>
       </div>
       <div id="err" role="status"></div>
@@ -416,7 +416,13 @@ const serverEl = $("server"), modelEl = $("model"), input = $("input"), thread =
 const lastTyped = store.get("last_server_typed", "");
 serverEl.value = activeServer || lastTyped || "";
 serverEl.oninput = () => {
-  store.set("last_server_typed", serverEl.value.trim());
+  if (editing || !activeServer) {
+    const val = serverEl.value.trim();
+    $("pill-addr").textContent = val || "New server";
+    $("pill-state").textContent = "Not connected";
+  } else {
+    store.set("last_server_typed", serverEl.value.trim());
+  }
 };
 
 // Optimistic connected state if activeServer already saved
@@ -571,8 +577,6 @@ $("add-server-btn").onclick = (e) => {
   closeServerMenu();
   closeMenu();
   editing = true;
-  activeServer = "";
-  store.set("activeServer", "");
   activeId = null;
   serverEl.value = "";
   attachedFiles = [];
@@ -690,22 +694,30 @@ if (compForm) {
 }
 
 function render() {
-  const showConnect = (!activeServer && !connected) || editing;
-  const c = cur();
+  const isAddingNew = editing || !activeServer;
+  const showConnect = isAddingNew || !connected;
+  const c = isAddingNew ? null : cur();
   document.body.dataset.state = showConnect ? "connect" : c && c.messages && c.messages.length ? "thread" : "empty";
-  document.body.classList.toggle("on", connected);
 
-  const addr = activeServer || serverEl.value.trim();
-  $("pill-addr").textContent = activeServer ? activeServer : (addr || "No server");
-  $("pill-state").textContent = connected ? "Connected" : (activeServer ? "Reconnecting…" : "No server");
-  $("server-pill").title = servers.length ? "Switch or add server" : "Enter a server address";
+  if (isAddingNew) {
+    document.body.classList.remove("on");
+    const typed = serverEl.value.trim();
+    $("pill-addr").textContent = typed || "New server";
+    $("pill-state").textContent = "Not connected";
+    $("server-pill").title = "Enter a server address";
+  } else {
+    document.body.classList.toggle("on", connected);
+    $("pill-addr").textContent = activeServer;
+    $("pill-state").textContent = connected ? "Connected" : "Reconnecting…";
+    $("server-pill").title = servers.length > 1 ? "Switch or add server" : "Server settings";
+  }
 
   const arrow = $("pill-arrow");
   if (arrow) arrow.style.display = servers.length ? "inline-block" : "none";
 
   $("hello").textContent = modelEl.value || "";
   const n = modelEl.options.length;
-  $("hello-sub").textContent = connected ? `${addr} · ${n} model${n === 1 ? "" : "s"} installed` : (activeServer ? `${addr} · Connecting…` : "");
+  $("hello-sub").textContent = connected ? `${activeServer} · ${n} model${n === 1 ? "" : "s"} installed` : (activeServer ? `${activeServer} · Connecting…` : "");
 
   const picker = $("model-picker");
   if (picker) {
@@ -713,10 +725,10 @@ function render() {
     picker.title = modelEl.value ? `Current model: ${modelEl.value}` : "Select model";
   }
 
-  // Render chat list strictly for current activeServer
+  // Render chat list strictly for current activeServer (empty when adding a new server)
   const list = $("list");
   list.innerHTML = "";
-  const chats = getCurChats();
+  const chats = isAddingNew ? [] : getCurChats();
   if (!chats.length) list.innerHTML = '<div class="none">No chats yet</div>';
   for (const ch of chats) {
     const row = document.createElement("div");
@@ -812,7 +824,7 @@ $("new").onclick = startNewChat;
 $("server-pill").onclick = toggleServerMenu;
 
 async function connect(silent) {
-  const server = (serverEl.value || activeServer || "").trim();
+  const server = (editing ? serverEl.value : (serverEl.value || activeServer || "")).trim();
   const err = $("err");
   if (!server) {
     if (!silent) {

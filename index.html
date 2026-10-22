@@ -539,7 +539,6 @@ function switchServer(srv) {
 
 function removeServer(srv, e) {
   e.stopPropagation();
-  if (!confirm(`Remove server ${srv}?`)) return;
   servers = servers.filter((s) => cleanServer(s) !== cleanServer(srv));
   store.set("servers", servers);
 
@@ -750,7 +749,6 @@ function render() {
     };
     row.querySelector(".del").onclick = (e) => {
       e.stopPropagation();
-      if (!confirm("Delete this chat?")) return;
       const updated = getCurChats().filter((x) => String(x.id) !== String(ch.id));
       saveCurChats(updated);
       if (String(activeId) === String(ch.id)) {

@@ -106,11 +106,13 @@ input, textarea { caret-color: var(--accent); }
 #hero h1 { font-family: var(--serif); font-size: clamp(30px, 5vw, 46px); font-weight: 500; letter-spacing: -.02em; line-height: 1.15; margin: 0 0 8px; text-wrap: balance; overflow-wrap: anywhere; }
 #hero p { font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 #hero p { color: var(--dim); margin: 0 auto 20px; max-width: 460px; }
-#connect-card { display: none; max-width: 520px; margin: 0 auto; text-align: left; }
+#connect-card { display: none; max-width: 540px; margin: 0 auto; text-align: left; }
 .row { display: flex; gap: 8px; }
 #server { flex: 1; min-width: 0; background: var(--raise); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font-family: var(--mono); font-size: 14px; font-weight: 500; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
 #server:focus { border-color: var(--accent); outline: none; }
-.btn { background: var(--accent); color: var(--on-accent); border: 0; border-radius: 10px; padding: 0 20px; font-weight: 600; }
+#port { width: 88px; flex: none; background: var(--raise); border: 1px solid var(--line); border-radius: 10px; padding: 12px 10px; font-family: var(--mono); font-size: 14px; font-weight: 500; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; text-align: center; }
+#port:focus { border-color: var(--accent); outline: none; }
+.btn { background: var(--accent); color: var(--on-accent); border: 0; border-radius: 10px; padding: 0 20px; font-weight: 600; white-space: nowrap; }
 .btn:disabled { opacity: .5; cursor: default; }
 #err { color: var(--bad); font-size: 14px; min-height: 22px; margin-top: 10px; }
 #err.info { color: var(--dim); }
@@ -333,7 +335,8 @@ body[data-state="empty"] main > .spacer { display: none; }
     <p class="on-empty" id="hello-sub"></p>
     <div id="connect-card">
       <div class="row">
-        <input id="server" type="text" placeholder="e.g. 192.168.1.100:11434" aria-label="Ollama server address" autocomplete="off" spellcheck="false">
+        <input id="server" type="text" placeholder="https://ollama.internal" aria-label="Ollama server address" autocomplete="off" spellcheck="false">
+        <input id="port" type="text" value="11434" placeholder="11434" aria-label="Port" autocomplete="off" spellcheck="false">
         <button class="btn" id="connect">Connect</button>
       </div>
       <div id="err" role="status"></div>
@@ -410,20 +413,53 @@ function saveCurChats(list) {
 }
 
 let activeId = null, connected = false, editing = false, controller = null;
-const serverEl = $("server"), modelEl = $("model"), input = $("input"), thread = $("thread"), scroller = $("scroll");
+const serverEl = $("server"), portEl = $("port"), modelEl = $("model"), input = $("input"), thread = $("thread"), scroller = $("scroll");
+
+function getFullTargetAddress() {
+  let host = serverEl.value.trim();
+  if (!host) return "";
+  host = host.replace(/\/+$/, "");
+  if (/:\d+$/.test(host)) return host;
+  const p = (portEl ? portEl.value.trim() : "") || "11434";
+  return `${host}:${p}`;
+}
+
+function updatePillFromInputs() {
+  if (editing || !activeServer) {
+    const full = getFullTargetAddress();
+    $("pill-addr").textContent = full || "New server";
+    $("pill-state").textContent = "Not connected";
+  } else {
+    store.set("last_server_typed", getFullTargetAddress());
+  }
+}
 
 // Restore last typed server or active server
 const lastTyped = store.get("last_server_typed", "");
-serverEl.value = activeServer || lastTyped || "";
-serverEl.oninput = () => {
-  if (editing || !activeServer) {
-    const val = serverEl.value.trim();
-    $("pill-addr").textContent = val || "New server";
-    $("pill-state").textContent = "Not connected";
+if (activeServer) {
+  // If activeServer has host:port, split into serverEl and portEl
+  const m = activeServer.match(/^(.*?)(?::(\d+))?$/);
+  if (m) {
+    serverEl.value = m[1] || "";
+    if (portEl && m[2]) portEl.value = m[2];
   } else {
-    store.set("last_server_typed", serverEl.value.trim());
+    serverEl.value = activeServer;
   }
-};
+} else if (lastTyped) {
+  const m = lastTyped.match(/^(.*?)(?::(\d+))?$/);
+  if (m) {
+    serverEl.value = m[1] || "";
+    if (portEl && m[2]) portEl.value = m[2];
+  } else {
+    serverEl.value = lastTyped;
+  }
+}
+
+serverEl.oninput = updatePillFromInputs;
+if (portEl) {
+  portEl.oninput = updatePillFromInputs;
+  portEl.onkeydown = (e) => { if (e.key === "Enter") connect(false); };
+}
 
 // Optimistic connected state if activeServer already saved
 if (activeServer) {
@@ -504,7 +540,13 @@ function switchServer(srv) {
   activeServer = srv;
   store.set("activeServer", activeServer);
   store.set("last_server_typed", srv);
-  serverEl.value = srv;
+  const m = srv.match(/^(.*?)(?::(\d+))?$/);
+  if (m) {
+    serverEl.value = m[1] || "";
+    if (portEl && m[2]) portEl.value = m[2];
+  } else {
+    serverEl.value = srv;
+  }
 
   const k = cleanServer(srv);
   const serverSavedId = store.get("activeId_" + k, null);
@@ -578,6 +620,7 @@ $("add-server-btn").onclick = (e) => {
   editing = true;
   activeId = null;
   serverEl.value = "";
+  if (portEl) portEl.value = "11434";
   attachedFiles = [];
   renderAttachments();
   render();
@@ -822,7 +865,7 @@ $("new").onclick = startNewChat;
 $("server-pill").onclick = toggleServerMenu;
 
 async function connect(silent) {
-  const server = (editing ? serverEl.value : (serverEl.value || activeServer || "")).trim();
+  const server = (editing ? getFullTargetAddress() : (getFullTargetAddress() || activeServer || "")).trim();
   const err = $("err");
   if (!server) {
     if (!silent) {

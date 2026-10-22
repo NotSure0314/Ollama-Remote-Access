@@ -264,6 +264,19 @@ input, textarea { caret-color: var(--accent); }
 }
 .fine { text-align: center; color: var(--dim); font-size: 12.5px; margin-top: 10px; }
 
+/* attachments */
+.attachments-shelf { display: none; flex-wrap: wrap; gap: 8px; padding: 0 0 8px 0; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+.attachments-shelf.has-files { display: flex; }
+.attach-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--side); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; font-size: 12px; color: var(--ink); max-width: 240px; }
+.attach-chip img.thumb { width: 22px; height: 22px; object-fit: cover; border-radius: 4px; flex: none; }
+.attach-chip .fname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.attach-chip .fsize { color: var(--dim); font-size: 10.5px; flex: none; }
+.attach-chip .remove-btn { background: none; border: 0; color: var(--dim); cursor: pointer; padding: 0; font-size: 14px; line-height: 1; display: flex; align-items: center; }
+.attach-chip .remove-btn:hover { color: var(--bad); }
+.msg-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.msg-img-thumb { max-width: 260px; max-height: 200px; border-radius: 8px; border: 1px solid var(--line); object-fit: cover; }
+#composer.dragover .box { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+
 /* states */
 body[data-state="connect"] #hero, body[data-state="connect"] #connect-card { display: block; }
 body[data-state="connect"] #hero .on-empty, body[data-state="connect"] #composer, body[data-state="connect"] #scroll, body[data-state="connect"] #model { display: none; }
@@ -329,12 +342,14 @@ body[data-state="empty"] main > .spacer { display: none; }
 
   <form id="composer" class="col">
     <div class="box">
+      <div id="attachments-shelf" class="attachments-shelf"></div>
       <textarea id="input" rows="1" placeholder="Message your model" aria-label="Message"></textarea>
       <div class="box-bottom">
         <div class="box-bottom-left">
-          <button type="button" class="composer-action-btn" id="composer-new-chat" title="New chat">
+          <button type="button" class="composer-action-btn" id="attach-btn" title="Attach file or image" aria-label="Attach file">
             <i class="ph ph-plus" aria-hidden="true"></i>
           </button>
+          <input type="file" id="file-input" style="display:none" multiple accept="text/*,image/*,.json,.md,.csv,.py,.js,.ts,.tsx,.jsx,.html,.css,.yaml,.yml,.sh,.sql,.log">
           <span class="composer-pill">Chat</span>
         </div>
         <div class="box-bottom-right">
@@ -357,6 +372,15 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
 
+// Server normalization: strip protocol, trailing slashes, whitespace
+function cleanServer(s) {
+  if (!s) return "";
+  return String(s).trim().toLowerCase().replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+}
+
+// Remove legacy shared chats so they never leak across servers
+try { localStorage.removeItem("chats"); } catch {}
+
 // Servers & server-scoped chats
 let servers = store.get("servers", []);
 servers = servers.filter((s) => s && s !== "https://ollama.internal:11434");
@@ -369,25 +393,19 @@ if (activeServer === "https://ollama.internal:11434") {
 }
 
 let serverChats = store.get("server_chats", {});
-
-// Migrate legacy single chats list if present
-const legacyChats = store.get("chats", null);
-if (legacyChats && Array.isArray(legacyChats) && legacyChats.length) {
-  if (activeServer && (!serverChats[activeServer] || !serverChats[activeServer].length)) {
-    serverChats[activeServer] = legacyChats;
-    store.set("server_chats", serverChats);
-  }
-}
+if (typeof serverChats !== "object" || serverChats === null) serverChats = {};
 
 function getCurChats() {
-  if (!activeServer) return [];
-  if (!serverChats[activeServer]) serverChats[activeServer] = [];
-  return serverChats[activeServer];
+  const k = cleanServer(activeServer);
+  if (!k) return [];
+  if (!serverChats[k] || !Array.isArray(serverChats[k])) serverChats[k] = [];
+  return serverChats[k];
 }
 
 function saveCurChats(list) {
-  if (!activeServer) return;
-  serverChats[activeServer] = list;
+  const k = cleanServer(activeServer);
+  if (!k) return;
+  serverChats[k] = list;
   store.set("server_chats", serverChats);
 }
 
@@ -403,11 +421,12 @@ serverEl.oninput = () => {
 
 // Optimistic connected state if activeServer already saved
 if (activeServer) {
+  const k = cleanServer(activeServer);
   connected = true;
   editing = false;
-  activeId = store.get("activeId_" + activeServer, null);
-  const cachedModels = store.get("models_" + activeServer, []);
-  const savedModel = store.get("model_" + activeServer, "");
+  activeId = store.get("activeId_" + k, null);
+  const cachedModels = store.get("models_" + k, []) || store.get("models_" + activeServer, []);
+  const savedModel = store.get("model_" + k, "") || store.get("model_" + activeServer, "");
   if (cachedModels.length) {
     modelEl.innerHTML = "";
     for (const n of cachedModels) modelEl.add(new Option(n, n));
@@ -417,14 +436,14 @@ if (activeServer) {
   editing = true;
 }
 
-const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const esc = (s) => String(s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 function md(s) {
-  return s.split("```").map((p, i) => i % 2
+  return String(s || "").split("```").map((p, i) => i % 2
     ? `<pre><code>${esc(p.replace(/^[\w+-]*\n/, ""))}</code></pre>`
     : esc(p).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")).join("");
 }
 
-const cur = () => getCurChats().find((c) => c.id === activeId);
+const cur = () => getCurChats().find((c) => String(c.id) === String(activeId));
 
 function closeServerMenu() {
   const sel = $("server-selector");
@@ -455,7 +474,7 @@ function renderServerMenu() {
   if (!container) return;
   container.innerHTML = "";
   for (const srv of servers) {
-    const isActive = srv === activeServer;
+    const isActive = cleanServer(srv) === cleanServer(activeServer);
     const item = document.createElement("button");
     item.type = "button";
     item.className = "server-item" + (isActive ? " active" : "");
@@ -480,18 +499,32 @@ function switchServer(srv) {
   store.set("activeServer", activeServer);
   store.set("last_server_typed", srv);
   serverEl.value = srv;
-  activeId = store.get("activeId_" + srv, null);
+
+  const k = cleanServer(srv);
+  const serverSavedId = store.get("activeId_" + k, null);
+  const chats = getCurChats();
+  if (serverSavedId && chats.some((c) => String(c.id) === String(serverSavedId))) {
+    activeId = String(serverSavedId);
+  } else {
+    activeId = chats.length ? String(chats[0].id) : null;
+    store.set("activeId_" + k, activeId);
+  }
+
+  attachedFiles = [];
+  renderAttachments();
   editing = false;
   connected = true;
   closeServerMenu();
   closeMenu();
 
-  const cachedModels = store.get("models_" + srv, []);
+  const cachedModels = store.get("models_" + k, []);
   if (cachedModels.length) {
-    const keep = store.get("model_" + srv, "");
+    const keep = store.get("model_" + k, "");
     modelEl.innerHTML = "";
     for (const n of cachedModels) modelEl.add(new Option(n, n));
     modelEl.value = cachedModels.includes(keep) ? keep : cachedModels[0];
+  } else {
+    modelEl.innerHTML = "";
   }
 
   render();
@@ -501,17 +534,27 @@ function switchServer(srv) {
 function removeServer(srv, e) {
   e.stopPropagation();
   if (!confirm(`Remove server ${srv}?`)) return;
-  servers = servers.filter((s) => s !== srv);
+  servers = servers.filter((s) => cleanServer(s) !== cleanServer(srv));
   store.set("servers", servers);
+
+  const k = cleanServer(srv);
+  delete serverChats[k];
   delete serverChats[srv];
   store.set("server_chats", serverChats);
-  if (activeServer === srv) {
+  try {
+    localStorage.removeItem("activeId_" + k);
+    localStorage.removeItem("models_" + k);
+    localStorage.removeItem("model_" + k);
+  } catch {}
+
+  if (cleanServer(activeServer) === k) {
     if (servers.length) {
       switchServer(servers[0]);
     } else {
       activeServer = "";
       store.set("activeServer", "");
       serverEl.value = "";
+      activeId = null;
       connected = false;
       editing = true;
       closeServerMenu();
@@ -528,22 +571,135 @@ $("add-server-btn").onclick = (e) => {
   closeServerMenu();
   closeMenu();
   editing = true;
+  activeServer = "";
+  store.set("activeServer", "");
+  activeId = null;
   serverEl.value = "";
+  attachedFiles = [];
+  renderAttachments();
   render();
   serverEl.focus();
 };
 
+/* Attachments & File Handling */
+let attachedFiles = [];
+
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return "0 B";
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+async function handleFiles(fileList) {
+  for (const file of fileList) {
+    if (file.type.startsWith("image/")) {
+      const dataUrl = await new Promise((res) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.readAsDataURL(file);
+      });
+      const base64 = String(dataUrl).split(",")[1] || "";
+      attachedFiles.push({
+        name: file.name,
+        size: file.size,
+        type: "image",
+        base64,
+        preview: dataUrl,
+      });
+    } else {
+      const text = await new Promise((res) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.readAsText(file);
+      });
+      attachedFiles.push({
+        name: file.name,
+        size: file.size,
+        type: "text",
+        content: text,
+      });
+    }
+  }
+  renderAttachments();
+}
+
+function renderAttachments() {
+  const shelf = $("attachments-shelf");
+  if (!shelf) return;
+  shelf.innerHTML = "";
+  shelf.classList.toggle("has-files", attachedFiles.length > 0);
+  attachedFiles.forEach((f, idx) => {
+    const chip = document.createElement("div");
+    chip.className = "attach-chip";
+    const icon = f.type === "image"
+      ? `<img src="${f.preview}" class="thumb" alt="">`
+      : `<i class="ph ph-file-code" style="font-size:14px;color:var(--accent);"></i>`;
+    chip.innerHTML = `
+      ${icon}
+      <span class="fname" title="${esc(f.name)}">${esc(f.name)}</span>
+      <span class="fsize">${formatBytes(f.size)}</span>
+      <button type="button" class="remove-btn" title="Remove attachment" aria-label="Remove"><i class="ph ph-x"></i></button>
+    `;
+    chip.querySelector(".remove-btn").onclick = (e) => {
+      e.stopPropagation();
+      attachedFiles.splice(idx, 1);
+      renderAttachments();
+    };
+    shelf.appendChild(chip);
+  });
+}
+
+const attachBtn = $("attach-btn");
+const fileInput = $("file-input");
+if (attachBtn && fileInput) {
+  attachBtn.onclick = (e) => {
+    e.preventDefault();
+    fileInput.click();
+  };
+  fileInput.onchange = () => {
+    if (fileInput.files && fileInput.files.length) {
+      handleFiles(Array.from(fileInput.files));
+      fileInput.value = "";
+    }
+  };
+}
+
+input.addEventListener("paste", (e) => {
+  if (e.clipboardData && e.clipboardData.files && e.clipboardData.files.length) {
+    handleFiles(Array.from(e.clipboardData.files));
+  }
+});
+
+const compForm = $("composer");
+if (compForm) {
+  compForm.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    compForm.classList.add("dragover");
+  });
+  compForm.addEventListener("dragleave", () => {
+    compForm.classList.remove("dragover");
+  });
+  compForm.addEventListener("drop", (e) => {
+    e.preventDefault();
+    compForm.classList.remove("dragover");
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+      handleFiles(Array.from(e.dataTransfer.files));
+    }
+  });
+}
+
 function render() {
   const showConnect = (!activeServer && !connected) || editing;
   const c = cur();
-  document.body.dataset.state = showConnect ? "connect" : c && c.messages.length ? "thread" : "empty";
+  document.body.dataset.state = showConnect ? "connect" : c && c.messages && c.messages.length ? "thread" : "empty";
   document.body.classList.toggle("on", connected);
 
   const addr = activeServer || serverEl.value.trim();
   $("pill-addr").textContent = activeServer ? activeServer : (addr || "No server");
   $("pill-state").textContent = connected ? "Connected" : (activeServer ? "Reconnecting…" : "No server");
   $("server-pill").title = servers.length ? "Switch or add server" : "Enter a server address";
-  
+
   const arrow = $("pill-arrow");
   if (arrow) arrow.style.display = servers.length ? "inline-block" : "none";
 
@@ -557,21 +713,25 @@ function render() {
     picker.title = modelEl.value ? `Current model: ${modelEl.value}` : "Select model";
   }
 
-  // Render chat list for current activeServer
+  // Render chat list strictly for current activeServer
   const list = $("list");
   list.innerHTML = "";
   const chats = getCurChats();
   if (!chats.length) list.innerHTML = '<div class="none">No chats yet</div>';
   for (const ch of chats) {
     const row = document.createElement("div");
-    row.className = "chat" + (ch.id === activeId ? " on" : "");
-    row.innerHTML = '<button class="open"></button><button class="del" aria-label="Delete chat"><i class="ph ph-trash" aria-hidden="true"></i></button>';
-    row.querySelector(".open").title = ch.title;
-    row.querySelector(".open").textContent = ch.title;
-    row.querySelector(".open").onclick = () => {
-      activeId = ch.id;
-      if (activeServer) store.set("activeId_" + activeServer, activeId);
+    row.className = "chat" + (String(ch.id) === String(activeId) ? " on" : "");
+    row.innerHTML = `
+      <button class="open" type="button" title="${esc(ch.title)}">${esc(ch.title)}</button>
+      <button class="del" type="button" aria-label="Delete chat" title="Delete chat"><i class="ph ph-trash" aria-hidden="true"></i></button>
+    `;
+    row.onclick = (e) => {
+      if (e.target.closest(".del")) return;
+      activeId = String(ch.id);
+      const k = cleanServer(activeServer);
+      if (k) store.set("activeId_" + k, activeId);
       editing = false;
+      connected = true;
       closeMenu();
       render();
       scroller.scrollTop = scroller.scrollHeight;
@@ -579,11 +739,12 @@ function render() {
     row.querySelector(".del").onclick = (e) => {
       e.stopPropagation();
       if (!confirm("Delete this chat?")) return;
-      const updated = getCurChats().filter((x) => x.id !== ch.id);
+      const updated = getCurChats().filter((x) => String(x.id) !== String(ch.id));
       saveCurChats(updated);
-      if (activeId === ch.id) {
-        activeId = null;
-        if (activeServer) store.set("activeId_" + activeServer, null);
+      if (String(activeId) === String(ch.id)) {
+        activeId = updated.length ? String(updated[0].id) : null;
+        const k = cleanServer(activeServer);
+        if (k) store.set("activeId_" + k, activeId);
       }
       render();
     };
@@ -591,34 +752,63 @@ function render() {
   }
 
   thread.innerHTML = "";
-  for (const m of c ? c.messages : []) addMsg(m.role, m.content);
+  for (const m of (c && c.messages ? c.messages : [])) {
+    addMsg(m.role, m.content, m.images, m.files);
+  }
   scroller.scrollTop = scroller.scrollHeight;
 }
 
-function addMsg(role, text) {
+function addMsg(role, text, images, files) {
   const el = document.createElement("div");
   el.className = "msg " + role;
   const body = document.createElement("div");
   body.className = "body";
-  if (role === "assistant") body.innerHTML = md(text); else body.textContent = text;
+
+  if (role === "user" && ((images && images.length) || (files && files.length))) {
+    const attachBar = document.createElement("div");
+    attachBar.className = "msg-attachments";
+    if (images) {
+      for (const img of images) {
+        const thumb = document.createElement("img");
+        thumb.src = String(img).startsWith("data:") ? img : `data:image/jpeg;base64,${img}`;
+        thumb.className = "msg-img-thumb";
+        attachBar.appendChild(thumb);
+      }
+    }
+    if (files) {
+      for (const f of files) {
+        const chip = document.createElement("div");
+        chip.className = "attach-chip";
+        chip.innerHTML = `<i class="ph ph-file-code" style="color:var(--accent);"></i><span class="fname">${esc(f)}</span>`;
+        attachBar.appendChild(chip);
+      }
+    }
+    body.appendChild(attachBar);
+  }
+
+  const textDiv = document.createElement("div");
+  if (role === "assistant") textDiv.innerHTML = md(text || ""); else textDiv.textContent = text || "";
+  body.appendChild(textDiv);
   el.appendChild(body);
   thread.appendChild(el);
-  return body;
+  return textDiv;
 }
 
 function closeMenu() { document.body.classList.remove("menu"); closeServerMenu(); }
 $("menu").onclick = () => document.body.classList.toggle("menu");
+
 function startNewChat() {
   activeId = null;
-  if (activeServer) store.set("activeId_" + activeServer, null);
+  const k = cleanServer(activeServer);
+  if (k) store.set("activeId_" + k, null);
   editing = false;
+  attachedFiles = [];
+  renderAttachments();
   closeMenu();
   render();
   input.focus();
 }
 $("new").onclick = startNewChat;
-const compNew = $("composer-new-chat");
-if (compNew) compNew.onclick = startNewChat;
 $("server-pill").onclick = toggleServerMenu;
 
 async function connect(silent) {
@@ -650,8 +840,9 @@ async function connect(silent) {
     const names = (data.models || []).map((m) => m.name);
     if (!names.length) throw new Error("Connected, but no models are installed. Run: ollama pull llama3.2");
 
-    store.set("models_" + server, names);
-    const keep = store.get("model_" + server, "");
+    const k = cleanServer(server);
+    store.set("models_" + k, names);
+    const keep = store.get("model_" + k, "");
     modelEl.innerHTML = "";
     for (const n of names) modelEl.add(new Option(n, n));
     modelEl.value = names.includes(keep) ? keep : names[0];
@@ -659,11 +850,28 @@ async function connect(silent) {
     connected = true;
     editing = false;
     activeServer = server;
-    if (!servers.includes(server)) {
+    if (!servers.some((s) => cleanServer(s) === k)) {
       servers.push(server);
       store.set("servers", servers);
     }
     store.set("activeServer", activeServer);
+
+    // Initialize this server's chat array if non-existent
+    if (!serverChats[k] || !Array.isArray(serverChats[k])) {
+      serverChats[k] = [];
+      store.set("server_chats", serverChats);
+    }
+
+    // Restore this server's activeId
+    const chats = getCurChats();
+    const savedId = store.get("activeId_" + k, null);
+    if (savedId && chats.some((c) => String(c.id) === String(savedId))) {
+      activeId = String(savedId);
+    } else {
+      activeId = chats.length ? String(chats[0].id) : null;
+      store.set("activeId_" + k, activeId);
+    }
+
     err.textContent = "";
     render();
     if (!silent) input.focus();
@@ -680,7 +888,11 @@ async function connect(silent) {
 }
 $("connect").onclick = () => connect(false);
 serverEl.onkeydown = (e) => { if (e.key === "Enter") connect(false); };
-modelEl.onchange = () => { if (activeServer) store.set("model_" + activeServer, modelEl.value); render(); };
+modelEl.onchange = () => {
+  const k = cleanServer(activeServer);
+  if (k) store.set("model_" + k, modelEl.value);
+  render();
+};
 
 const UP_ICON = `<i class="ph ph-arrow-up" aria-hidden="true"></i>`;
 function setBusy(on) {
@@ -691,16 +903,44 @@ function setBusy(on) {
 
 async function send(text) {
   if (!activeServer) return;
+  const currentAttachments = [...attachedFiles];
+  attachedFiles = [];
+  renderAttachments();
+
+  let promptText = text;
+  const images = [];
+  const fileNames = [];
+
+  for (const f of currentAttachments) {
+    if (f.type === "image") {
+      images.push(f.base64);
+    } else if (f.type === "text") {
+      fileNames.push(f.name);
+      promptText += `\n\n--- Attachment: ${f.name} ---\n${f.content}\n---`;
+    }
+  }
+
+  if (!promptText.trim() && !images.length) return;
+
+  const k = cleanServer(activeServer);
   let chats = getCurChats();
   let c = cur();
   if (!c) {
-    c = { id: String(Date.now()), title: text.slice(0, 48), messages: [] };
+    const titleText = text.trim() || (currentAttachments[0] ? currentAttachments[0].name : "New chat");
+    c = { id: String(Date.now()), title: titleText.slice(0, 48), server: k, messages: [] };
     chats.unshift(c);
     activeId = c.id;
+    store.set("activeId_" + k, activeId);
   }
-  c.messages.push({ role: "user", content: text });
+
+  const userMsg = { role: "user", content: promptText };
+  if (images.length) userMsg.images = images;
+  if (fileNames.length) userMsg.files = fileNames;
+
+  c.messages.push(userMsg);
   saveCurChats(chats);
   render();
+
   const body = addMsg("assistant", "");
   body.innerHTML = '<span class="wait">Thinking…</span>';
   scroller.scrollTop = scroller.scrollHeight;
@@ -709,9 +949,18 @@ async function send(text) {
   controller = new AbortController();
   setBusy(true);
   try {
+    const payload = {
+      server: activeServer,
+      model: modelEl.value,
+      messages: c.messages.map((m) => {
+        const item = { role: m.role, content: m.content };
+        if (m.images && m.images.length) item.images = m.images;
+        return item;
+      }),
+    };
     const r = await fetch("/api/chat", {
       method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
-      body: JSON.stringify({ server: activeServer, model: modelEl.value, messages: c.messages }),
+      body: JSON.stringify(payload),
     });
     if (!r.ok) {
       let errText = `Request failed (${r.status}).`;
@@ -768,7 +1017,7 @@ $("composer").onsubmit = (e) => {
   e.preventDefault();
   if (controller) { controller.abort(); return; }
   const t = input.value.trim();
-  if (!t || !connected) return;
+  if ((!t && !attachedFiles.length) || !connected) return;
   input.value = ""; input.style.height = "auto";
   send(t);
 };

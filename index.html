@@ -464,9 +464,9 @@ serverEl.addEventListener("blur", () => {
 if (portEl) {
   portEl.oninput = updatePillFromInputs;
   portEl.onkeydown = (e) => { if (e.key === "Enter") connect(false); };
-  // When user clicks port, auto-fill 11434 if empty and select for easy editing
+  // When user clicks port, only auto-fill 11434 if an IP address has been entered
   portEl.addEventListener("focus", () => {
-    if (!portEl.value.trim()) {
+    if (serverEl.value.trim() && !portEl.value.trim()) {
       portEl.value = "11434";
       updatePillFromInputs();
       portEl.select();
@@ -633,7 +633,7 @@ $("add-server-btn").onclick = (e) => {
   editing = true;
   activeId = null;
   serverEl.value = "";
-  if (portEl) portEl.value = "11434";
+  if (portEl) portEl.value = "";
   attachedFiles = [];
   renderAttachments();
   render();

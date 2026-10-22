@@ -336,7 +336,7 @@ body[data-state="empty"] main > .spacer { display: none; }
     <div id="connect-card">
       <div class="row">
         <input id="server" type="text" placeholder="https://ollama.internal" aria-label="Ollama server address" autocomplete="off" spellcheck="false">
-        <input id="port" type="text" value="11434" placeholder="11434" aria-label="Port" autocomplete="off" spellcheck="false">
+        <input id="port" type="text" placeholder="port" aria-label="Port" autocomplete="off" spellcheck="false">
         <button class="btn" id="connect">Connect</button>
       </div>
       <div id="err" role="status"></div>
@@ -444,21 +444,34 @@ if (activeServer) {
     if (portEl && m[2]) portEl.value = m[2];
   } else {
     serverEl.value = activeServer;
+    if (portEl) portEl.value = "11434";
   }
-} else if (lastTyped) {
-  const m = lastTyped.match(/^(.*?)(?::(\d+))?$/);
-  if (m) {
-    serverEl.value = m[1] || "";
-    if (portEl && m[2]) portEl.value = m[2];
-  } else {
-    serverEl.value = lastTyped;
-  }
+} else {
+  serverEl.value = "";
+  if (portEl) portEl.value = "";
 }
 
 serverEl.oninput = updatePillFromInputs;
+
+// When user enters an IP and clicks off of it, auto-fill port as 11434 if empty
+serverEl.addEventListener("blur", () => {
+  if (serverEl.value.trim() && portEl && !portEl.value.trim()) {
+    portEl.value = "11434";
+    updatePillFromInputs();
+  }
+});
+
 if (portEl) {
   portEl.oninput = updatePillFromInputs;
   portEl.onkeydown = (e) => { if (e.key === "Enter") connect(false); };
+  // When user clicks port, auto-fill 11434 if empty and select for easy editing
+  portEl.addEventListener("focus", () => {
+    if (!portEl.value.trim()) {
+      portEl.value = "11434";
+      updatePillFromInputs();
+      portEl.select();
+    }
+  });
 }
 
 // Optimistic connected state if activeServer already saved
